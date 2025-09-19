@@ -1,12 +1,13 @@
 import 'package:farmer_crate/Admin/adminreport.dart';
+import 'package:farmer_crate/Admin/total_order.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Signin.dart';
 import 'ConsumerManagement.dart';
 import 'Farmeruser.dart';
+
 
 class AdminManagementPage extends StatefulWidget {
   final dynamic user;
@@ -376,6 +377,7 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
 
   Future<void> _approveItem(String itemId, String itemType) async {
     final uniqueId = _generateUniqueId(itemType);
+    final TextEditingController approvalController = TextEditingController();
     
     showDialog(
       context: context,
@@ -386,64 +388,59 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Do you want to verify this $itemType account?'),
+              Text('Please provide approval notes for this $itemType account:'),
               SizedBox(height: 16),
-              Container(
-                padding: EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green[50],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green[200]!),
+              TextField(
+                controller: approvalController,
+                decoration: InputDecoration(
+                  labelText: 'Approval Notes',
+                  hintText: 'Enter approval notes...',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.green),
+                  ),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Generated Unique ID:',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green[800],
-                        fontSize: 14,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      uniqueId,
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        color: Colors.green[700],
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    SizedBox(height: 8),
-                    Text(
-                      'This ID will be assigned to the ${itemType.toLowerCase()} upon verification.',
-                      style: TextStyle(
-                        color: Colors.green[600],
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
+                maxLines: 3,
+                maxLength: 200,
               ),
             ],
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _processApproval(itemId, itemType, uniqueId);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Color(0xFF2E7D32),
-                foregroundColor: Colors.white,
+            Expanded(
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Cancel'),
               ),
-              child: const Text('Approve & Generate ID'),
+            ),
+            SizedBox(width: 8),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () async {
+                  if (approvalController.text.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Please provide approval notes'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.of(context).pop();
+                  await _processApproval(itemId, itemType, uniqueId, approvalController.text.trim());
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color(0xFF2E7D32),
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Approve'),
+              ),
             ),
           ],
         );
@@ -451,7 +448,7 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
     );
   }
 
-  Future<void> _processApproval(String itemId, String itemType, String uniqueId) async {
+  Future<void> _processApproval(String itemId, String itemType, String uniqueId, String approvalNotes) async {
     try {
       final token = widget.token;
 
@@ -459,32 +456,89 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
         throw Exception('No authentication token found. Please login again.');
       }
 
-      final endpoint = itemType.toLowerCase() == 'farmer'
+      final isFarmer = itemType.toLowerCase() == 'farmer';
+      final endpoint = isFarmer
           ? 'https://farmercrate.onrender.com/api/admin/farmers/$itemId/approve'
           : 'https://farmercrate.onrender.com/api/admin/transporters/$itemId/approve';
 
-      // Prepare the request body based on the item type
-      final requestBody = itemType.toLowerCase() == 'farmer'
-          ? {
-              'unique_id': uniqueId,
-              'verified': true,
-              'verified_at': DateTime.now().toIso8601String(),
-            }
-          : {
-              'approval_notes': 'Account verified with unique ID: $uniqueId',
-              'unique_id': uniqueId,
-              'verified': true,
-              'verified_at': DateTime.now().toIso8601String(),
-            };
+      print('=== Approving $itemType ===');
+      print('Endpoint: $endpoint');
+      print('Item ID: $itemId');
+      print('Unique ID: $uniqueId');
+      print('Approval Notes: $approvalNotes');
 
-      final response = await http.post(
-        Uri.parse(endpoint),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode(requestBody),
-      );
+      http.Response response;
+
+      if (isFarmer) {
+        // Farmers: keep POST with payload
+        final requestBody = {
+          'unique_id': uniqueId,
+          'verified': true,
+          'verified_at': DateTime.now().toIso8601String(),
+        };
+
+        response = await http.post(
+          Uri.parse(endpoint),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(requestBody),
+        );
+      } else {
+        // Transporters: use PUT method
+        final requestBody = {
+          'unique_id': uniqueId,
+          'verified': true,
+          'verified_at': DateTime.now().toIso8601String(),
+          'approval_notes': approvalNotes,
+        };
+
+        response = await http.put(
+          Uri.parse(endpoint),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(requestBody),
+        );
+      }
+
+      // Handle HTTP redirects explicitly (e.g., 307 from http->https)
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers['location'] != null) {
+        final redirectUrl = response.headers['location']!;
+        if (isFarmer) {
+          response = await http.post(
+            Uri.parse(redirectUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'unique_id': uniqueId,
+              'verified': true,
+              'verified_at': DateTime.now().toIso8601String(),
+            }),
+          );
+        } else {
+          response = await http.put(
+            Uri.parse(redirectUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'unique_id': uniqueId,
+              'verified': true,
+              'verified_at': DateTime.now().toIso8601String(),
+              'approval_notes': approvalNotes,
+            }),
+          );
+        }
+      }
+
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
 
       if (response.statusCode == 200) {
         // Show success message with the generated ID
@@ -504,6 +558,16 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                     color: Colors.white,
                   ),
                 ),
+                if (!isFarmer) ...[
+                  SizedBox(height: 4),
+                  Text(
+                    'Notes: $approvalNotes',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
               ],
             ),
             backgroundColor: Color(0xFF2E7D32),
@@ -526,8 +590,11 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
         );
         _fetchData(); // Refresh the list
       } else {
-        final errorData = jsonDecode(response.body);
-        final errorMessage = errorData['message'] ?? 'Failed to verify account';
+        String errorMessage = 'Failed to verify account';
+        try {
+          final errorData = jsonDecode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {}
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('$errorMessage (Status: ${response.statusCode})'),
@@ -580,29 +647,38 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
             ],
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                if (reasonController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Please provide a rejection reason'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-                Navigator.of(context).pop();
-                await _processRejection(itemId, itemType, reasonController.text.trim());
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
+            Expanded(
+              child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Cancel'),
               ),
-              child: const Text('Reject'),
+            ),
+            SizedBox(width: 8),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () async {
+                  if (reasonController.text.trim().isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Please provide a rejection reason'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                    return;
+                  }
+                  Navigator.of(context).pop();
+                  await _processRejection(itemId, itemType, reasonController.text.trim());
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: const Text('Reject'),
+              ),
             ),
           ],
         );
@@ -618,7 +694,8 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
         throw Exception('No authentication token found. Please login again.');
       }
 
-      final endpoint = itemType.toLowerCase() == 'farmer'
+      final isFarmer = itemType.toLowerCase() == 'farmer';
+      String endpoint = isFarmer
           ? 'https://farmercrate.onrender.com/api/admin/farmers/$itemId/reject'
           : 'https://farmercrate.onrender.com/api/admin/transporters/$itemId/reject';
 
@@ -627,16 +704,65 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
         'rejected_at': DateTime.now().toIso8601String(),
       };
 
-      final response = await http.post(
-        Uri.parse(endpoint),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode(requestBody),
-      );
+      print('=== Rejecting $itemType ===');
+      print('Endpoint: $endpoint');
+      print('Item ID: $itemId');
+      print('Request Body: ${jsonEncode(requestBody)}');
+
+      var response = isFarmer 
+          ? await http.post(
+              Uri.parse(endpoint),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode(requestBody),
+            )
+          : await http.put(
+              Uri.parse(endpoint),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode(requestBody),
+            );
+
+      print('Response status: ${response.statusCode}');
+      print('Response body: ${response.body}');
+
+      // Handle HTTP redirects explicitly (e.g., 307 from http->https)
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers['location'] != null) {
+        final redirectUrl = response.headers['location']!;
+        response = isFarmer 
+            ? await http.post(
+                Uri.parse(redirectUrl),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $token',
+                },
+                body: jsonEncode(requestBody),
+              )
+            : await http.put(
+                Uri.parse(redirectUrl),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $token',
+                },
+                body: jsonEncode(requestBody),
+              );
+      }
+
 
       if (response.statusCode == 200) {
+        // Remove the rejected item from the local list
+        setState(() {
+          if (isFarmer) {
+            farmers.removeWhere((farmer) => farmer.id == itemId);
+          } else {
+            transporters.removeWhere((transporter) => transporter.id == itemId);
+          }
+        });
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('$itemType account rejected successfully'),
@@ -646,8 +772,11 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
         );
         _fetchData(); // Refresh the list
       } else {
-        final errorData = jsonDecode(response.body);
-        final errorMessage = errorData['message'] ?? 'Failed to reject account';
+        String errorMessage = 'Failed to reject account';
+        try {
+          final errorData = jsonDecode(response.body);
+          errorMessage = errorData['message'] ?? errorMessage;
+        } catch (_) {}
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('$errorMessage (Status: ${response.statusCode})'),
@@ -909,6 +1038,21 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                 );
               },
             ),
+            ListTile(
+              leading: Icon(Icons.shopping_cart, color: Colors.green[600]),
+              title: const Text('Total Orders'),
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => OrdersManagementPage(
+                      user: widget.user,
+                      token: widget.token,
+                    ),
+                  ),
+                );
+              },
+            ),
             const Divider(),
             ListTile(
               leading: Icon(Icons.logout, color: Colors.red[600]),
@@ -1110,6 +1254,19 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
             setState(() {
               _currentIndex = index;
             });
+            
+            // Handle navigation based on selected index
+            if (index == 2) { // Orders tab
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => OrdersManagementPage(
+                    user: widget.user,
+                    token: widget.token,
+                  ),
+                ),
+              );
+            }
           },
           items: const [
             BottomNavigationBarItem(
@@ -1119,6 +1276,10 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
             BottomNavigationBarItem(
               icon: Icon(Icons.pending_actions, size: 24),
               label: 'Requests',
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.shopping_cart, size: 24),
+              label: 'Orders',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.person_outline, size: 24),
@@ -1380,28 +1541,6 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                       ),
                     ),
                   ),
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    child: ElevatedButton(
-                      onPressed: () => _deleteItem(farmer.id, 'Farmer'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFD32F2F),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(screenWidth * 0.02),
-                        ),
-                        elevation: 2,
-                        minimumSize: Size(screenWidth * 0.12, screenHeight * 0.04),
-                        padding: EdgeInsets.symmetric(vertical: screenWidth * 0.015),
-                      ),
-                      child: Text(
-                        'Delete',
-                        style: TextStyle(fontSize: screenWidth * 0.028),
-                      ),
-                    ),
-                  ),
-                ),
                 Expanded(
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 2),
@@ -1683,28 +1822,6 @@ class _AdminManagementPageState extends State<AdminManagementPage> {
                       ),
                     ),
                   ),
-                Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 2),
-                    child: ElevatedButton(
-                      onPressed: () => _deleteItem(transporter.id, 'Transporter'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFD32F2F),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(screenWidth * 0.02),
-                        ),
-                        elevation: 2,
-                        minimumSize: Size(screenWidth * 0.12, screenHeight * 0.04),
-                        padding: EdgeInsets.symmetric(vertical: screenWidth * 0.015),
-                      ),
-                      child: Text(
-                        'Delete',
-                        style: TextStyle(fontSize: screenWidth * 0.028),
-                      ),
-                    ),
-                  ),
-                ),
                 Expanded(
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 2),
